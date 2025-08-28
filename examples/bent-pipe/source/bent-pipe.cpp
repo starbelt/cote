@@ -38,6 +38,9 @@
 #include <Transmitter.hpp>   // Transmitter
 #include <utilities.hpp>     // calcJulianDayFromYMD, calcSecSinceMidnight
 
+// Scheduling policies
+#include "PolicyFactory.hpp"
+
 int main(int argc, char** argv) {
   // Set up variables
   std::filesystem::path dateTimeFile;      // date and time
@@ -50,11 +53,13 @@ int main(int argc, char** argv) {
   std::vector<std::filesystem::path> groundStationFiles; // ground station files
   std::vector<std::filesystem::path> rxGndFiles;         // gnd station RX files
   std::filesystem::path logDirectory;      // logs destination
+  std::string policyStr = "greedy";        // default to original cote algorithm
   // Parse command line argument(s)
-  if(argc!=3) {
+  if(argc < 3 || argc > 4) {
     std::cout << "Usage: " << argv[0]
               << " /path/to/configuration/"
               << " /path/to/logs/"
+              << " [policy]"
               << std::endl;
     std::exit(EXIT_SUCCESS);
   } else {
@@ -86,6 +91,14 @@ int main(int argc, char** argv) {
     }
     // Set log directory
     logDirectory = std::filesystem::path(argv[2]);
+    
+    // Set policy (optional 4th argument)
+    if(argc == 4) {
+      policyStr = std::string(argv[3]);
+    }
+    
+    // Append policy to log directory
+    logDirectory /= policyStr;
   }
   // Set up log
   std::vector<cote::LogLevel> levels = {cote::LogLevel::INFO};
@@ -254,6 +267,9 @@ int main(int argc, char** argv) {
     gndId2CurrSat[groundStations.at(i).getID()] = NULL;
   }
   std::vector<cote::Channel> downlinks = std::vector<cote::Channel>();
+  
+  std::unique_ptr<SchedulingPolicy> policy = PolicyFactory::createPolicy(policyStr);
+  
   // Simulation loop
   uint64_t stepCount = 0;
   while(stepCount<numSteps) {
@@ -299,26 +315,15 @@ int main(int argc, char** argv) {
     // Simulation logic: create channels and downlink data
     for(size_t i=0; i<groundStations.size(); i++) {
       const uint32_t GND_ID = groundStations.at(i).getID();
-      // If no current link, choose unoccupied visible satellite with most data
+      // If no current link, choose satellite using scheduling policy
       if(gndId2CurrSat[GND_ID]==NULL) {
-        cote::Satellite* bestSat = NULL;
-        uint64_t bestSatBuffer = 0;
-        for(size_t j=0; j<gndId2VisSats[GND_ID].size(); j++) {
-          cote::Satellite* satj = gndId2VisSats[GND_ID].at(j);
-          const uint32_t SAT_ID = satj->getID();
-          const std::array<double,3> satjEciPosn = satj->getECIPosn();
-          const uint64_t BUF = satId2Sensor[SAT_ID]->getBitsBuffered();
-          if(!satId2Occupied[SAT_ID] && BUF>bestSatBuffer) {
-            bestSat = satj;
-            bestSatBuffer = BUF;
-          }
-          satj = NULL;
-        }
+        cote::Satellite* bestSat = policy->selectSatellite(
+          gndId2VisSats[GND_ID], satId2Sensor, satId2Occupied, dateTime, GND_ID
+        );
         if(bestSat!=NULL) {
           satId2Occupied[bestSat->getID()] = true;
           gndId2CurrSat[GND_ID] = bestSat;
         }
-        bestSat = NULL;
       }
       // If a downlink exists, formally construct it
       if(gndId2CurrSat[GND_ID]!=NULL) {
