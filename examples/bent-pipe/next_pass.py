@@ -63,10 +63,15 @@ def write_num_steps(path, steps):
 
 def load_tle(path):
     with open(path, "r") as f:
-        l1 = f.readline().strip()
-        l2 = f.readline().strip()
-    if not (l1.startswith("1 ") and l2.startswith("2 ")):
-        raise RuntimeError("planet.tle must contain exactly two numeric TLE lines (no name line).")
+        lines = [line.strip() for line in f.readlines() if line.strip()]
+    
+    # Handle both 2-line and 3-line TLE formats
+    if len(lines) == 2 and lines[0].startswith("1 ") and lines[1].startswith("2 "):
+        return lines[0], lines[1]
+    elif len(lines) == 3 and lines[1].startswith("1 ") and lines[2].startswith("2 "):
+        return lines[1], lines[2]  # Skip name line
+    else:
+        raise RuntimeError("planet.tle must contain either 2 or 3 lines: [name], line1, line2")
     return l1, l2
 
 def find_next_pass(start_dt, l1, l2):
